@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+motor
+pymongo
+python-jose[cryptography]
+passlib[bcrypt]
+pydantic
+pandas
+numpy
+scikit-learn
+joblib
+shapely
+requests
+python-dotenv
