@@ -1,60 +1,59 @@
-import { Link, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { NavLink, useLocation } from "react-router-dom";
+import ProfileMenu from "./ProfileMenu";
+
+const tabs = [
+  { to: "/dashboard", label: "Dashboard" },
+  { to: "/heatmap", label: "Heatmap" },
+  { to: "/saferoute", label: "Safe Route" },
+  { to: "/report", label: "Report" },
+  { to: "/analytics", label: "Analytics" }
+];
 
 export default function Navbar() {
-  const navigate = useNavigate();
+  const location = useLocation();
+  const [activePath, setActivePath] = useState(location.pathname);
 
-  const logout = () => {
-    localStorage.removeItem("token");
-    navigate("/login");
-  };
+  useEffect(() => setActivePath(location.pathname), [location.pathname]);
 
   return (
-    <nav className="w-full bg-gray-900 border-b border-gray-700 shadow-lg sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto flex items-center justify-between px-6 py-4">
+    <header className="bg-gradient-to-b from-[#071028]/60 via-transparent to-transparent backdrop-blur sticky top-0 z-40">
+      <div className="container mx-auto px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-6">
+          <div className="text-2xl font-semibold text-accent">CrimeWatch</div>
 
-        {/* Left Side */}
-        <div className="flex items-center space-x-6">
-          <Link
-            to="/dashboard"
-            className="text-xl font-bold text-green-400 hover:text-green-300 transition"
-          >
-            CrimeWatch
-          </Link>
-
-          <div className="hidden md:flex items-center space-x-4">
-            <Link to="/dashboard" className="text-gray-300 hover:text-white transition">
-              Dashboard
-            </Link>
-
-            <Link to="/heatmap" className="text-gray-300 hover:text-white transition">
-              Heatmap
-            </Link>
-
-            <Link to="/saferoute" className="text-gray-300 hover:text-white transition">
-              Safe Route
-            </Link>
-
-            <Link to="/report" className="text-gray-300 hover:text-white transition">
-              Report
-            </Link>
-
-            {/* NEW: ANALYTICS TAB */}
-            <Link to="/analytics" className="text-gray-300 hover:text-white transition">
-              Analytics
-            </Link>
-          </div>
+          <nav className="hidden md:flex gap-6 items-end">
+            {tabs.map((tab) => (
+              <NavLink
+                key={tab.to}
+                to={tab.to}
+                className={({ isActive }) =>
+                  `relative px-2 py-1 text-sm font-medium transition-colors ${
+                    isActive ? "text-white" : "text-[#9AA8B2]"
+                  }`
+                }
+              >
+                {({ isActive }) => (
+                  <span className="inline-flex flex-col items-center">
+                    <span>{tab.label}</span>
+                    <span
+                      className={`block h-0.5 w-full rounded mt-2 transform transition-transform duration-300 origin-left ${
+                        isActive ? "scale-x-100 bg-gradient-to-r from-[#3B82F6] to-[#7C3AED]" : "scale-x-0 bg-transparent"
+                      }`}
+                    />
+                  </span>
+                )}
+              </NavLink>
+            ))}
+          </nav>
         </div>
 
-        {/* Right Side */}
-        <div>
-          <button
-            onClick={logout}
-            className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg transition shadow-md"
-          >
-            Logout
-          </button>
+        <div className="flex items-center gap-4">
+          <div className="hidden sm:block text-sm text-[#9AA8B2]">Signed in</div>
+          <ProfileMenu />
         </div>
       </div>
-    </nav>
+    </header>
   );
 }
+

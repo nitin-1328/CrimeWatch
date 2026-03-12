@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import axios from "../api/axios";
 import {
   MapContainer,
@@ -8,7 +8,7 @@ import {
   Popup,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
-import Navbar from "../components/Navbar";
+// Navbar is rendered by ProtectedRoute wrapper
 import { motion } from "framer-motion";
 import L from "leaflet";
 
@@ -35,6 +35,8 @@ export default function SafeRoute() {
 
   const [route, setRoute] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [animatedPositions, setAnimatedPositions] = useState([]);
+  const [travelerPos, setTravelerPos] = useState(null);
 
   // Autocomplete search
   const fetchSuggestions = async (query, type) => {
@@ -108,6 +110,9 @@ export default function SafeRoute() {
       );
 
       setRoute(res.data);
+      // reset animated positions; animation effect will handle playback
+      setAnimatedPositions([]);
+      setTravelerPos(null);
     } catch (err) {
       console.error(err);
       alert("Error fetching route");
@@ -116,11 +121,47 @@ export default function SafeRoute() {
     setLoading(false);
   };
 
-  return (
-    <>
-      <Navbar />
+  // animate polyline drawing and moving marker
+  useEffect(() => {
+    if (!route || !route.geometry || !route.geometry.coordinates) return;
 
-      <div className="min-h-screen px-6 py-8 bg-gradient-to-br from-gray-900 to-black text-gray-100">
+    const coords = route.geometry.coordinates.map((c) => [c[1], c[0]]); // [lat, lon]
+    if (!coords.length) return;
+
+    // progressive draw
+    let idx = 0;
+    setAnimatedPositions([coords[0]]);
+    setTravelerPos(coords[0]);
+
+    const stepMs = Math.max(16, Math.floor(700 / Math.max(1, coords.length)));
+
+    const interval = setInterval(() => {
+      idx += 1;
+      if (idx >= coords.length) {
+        clearInterval(interval);
+        setTravelerPos(coords[coords.length - 1]);
+        return;
+      }
+      setAnimatedPositions((s) => [...s, coords[idx]]);
+      setTravelerPos(coords[idx]);
+    }, stepMs);
+
+    return () => clearInterval(interval);
+  }, [route]);
+
+  // small helper to compute straight-line distance when route doesn't include it
+  function haversine([lat1, lon1], [lat2, lon2]) {
+    function toRad(x) { return (x * Math.PI) / 180; }
+    const R = 6371; // km
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
+
+  return (
+    <div className="min-h-screen px-6 py-8 bg-gradient-to-br from-[#071028] to-black text-gray-100">
         <h1 className="text-4xl font-extrabold text-center mb-8 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-blue-700">
           Safe Route Finder 🚗✨
         </h1>
@@ -223,11 +264,17 @@ export default function SafeRoute() {
                 <Popup>Destination</Popup>
               </Marker>
 
-              <Polyline
-                positions={route.geometry.coordinates.map((c) => [c[1], c[0]])}
-                color="lime"
-                weight={5}
-              />
+              {/* animated polyline (progressive) */}
+              {animatedPositions && animatedPositions.length > 0 && (
+                <Polyline positions={animatedPositions} color="#60E0A0" weight={5} />
+              )}
+
+              {/* moving traveler marker */}
+              {travelerPos && (
+                <Marker position={travelerPos} icon={L.divIcon({ className: 'bg-accent rounded-full w-3 h-3', iconSize: [10,10] })}>
+                  <Popup>Moving along route</Popup>
+                </Marker>
+              )}
             </MapContainer>
           </motion.div>
         )}
@@ -329,6 +376,6 @@ export default function SafeRoute() {
           </motion.div>
         )}
       </div>
-    </>
+    
   );
 }

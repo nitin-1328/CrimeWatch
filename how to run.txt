@@ -1,0 +1,14 @@
+ backend:
+
+cd backend
+activate venu :.\venv\Scripts\activate
+
+now activate backend: uvicorn src.main:app --reload --port 8000
+
+
+frontend: 
+cd frontend
+npm run dev
+
+
+run in different powershell

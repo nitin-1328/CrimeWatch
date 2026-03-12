@@ -1,11 +1,6 @@
-import Navbar from "../components/Navbar";
-
 export default function Dashboard() {
   return (
-    <>
-      <Navbar />
-
-      <div className="min-h-screen bg-gray-900 text-gray-200 px-6 py-10">
+    <div className="min-h-screen bg-bg text-gray-200 px-6 py-10">
 
         {/* Page Heading */}
         <div className="max-w-5xl mx-auto">
@@ -91,6 +86,6 @@ export default function Dashboard() {
 
         </div>
       </div>
-    </>
+    
   );
 }

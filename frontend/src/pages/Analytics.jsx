@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import Navbar from "../components/Navbar";
 import axios from "../api/axios";
 import {
   Line,
@@ -32,10 +31,7 @@ export default function Analytics() {
   }, []);
 
   return (
-    <>
-      <Navbar />
-
-      <div className="min-h-screen px-8 py-10 bg-gray-900 text-white">
+    <div className="min-h-screen px-8 py-10 bg-bg text-white">
 
         <h1 className="text-4xl font-bold mb-8">Analytics Dashboard</h1>
 
@@ -90,6 +86,6 @@ export default function Analytics() {
           )}
         </div>
       </div>
-    </>
+    
   );
 }

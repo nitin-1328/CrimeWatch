@@ -1,9 +1,30 @@
 import { useState } from "react";
 import API from "../api/axios";
-import Navbar from "../components/Navbar";
 import { motion } from "framer-motion";
 
+const Step = ({ children }) => (
+  <div className="space-y-4">{children}</div>
+);
+
+function ProgressBar({ step }) {
+  const percent = ((step - 1) / 2) * 100;
+  return (
+    <div className="w-full bg-bg/40 rounded-full h-2 overflow-hidden">
+      <motion.div
+        className="h-2 bg-gradient-to-r from-primary to-accent"
+        initial={{ width: 0 }}
+        animate={{ width: `${percent}%` }}
+        transition={{ duration: 0.4 }}
+      />
+    </div>
+  );
+}
+
 export default function Report() {
+  const [step, setStep] = useState(1);
+  const [submitting, setSubmitting] = useState(false);
+  const [success, setSuccess] = useState(false);
+
   const [form, setForm] = useState({
     description: "",
     latitude: "",
@@ -13,158 +34,120 @@ export default function Report() {
     weapon_used: "",
   });
 
-  const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState("");
+  function update(k, v) {
+    setForm((s) => ({ ...s, [k]: v }));
+  }
 
-  const updateForm = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-  };
-
-  const submitReport = async (e) => {
+  async function handleFinalSubmit(e) {
     e.preventDefault();
-    setLoading(true);
-    setMsg("");
-
+    setSubmitting(true);
     try {
-      const res = await API.post("/incidents/report", {
+      await API.post("/incidents/report", {
         ...form,
         latitude: parseFloat(form.latitude),
         longitude: parseFloat(form.longitude),
         victim_age: form.victim_age ? parseInt(form.victim_age) : null,
       });
-
-      setMsg("Incident successfully reported!");
-      setForm({
-        description: "",
-        latitude: "",
-        longitude: "",
-        victim_age: "",
-        victim_gender: "",
-        weapon_used: "",
-      });
+      setSuccess(true);
     } catch (err) {
-      setMsg("Error submitting incident!");
+      // show inline error — keep UX simple
+      alert("Failed to submit report. Try again.");
     }
+    setSubmitting(false);
+  }
 
-    setLoading(false);
-  };
+  if (success) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-bg">
+        <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-card p-8 rounded-2xl shadow-card-dark text-center">
+          <motion.svg width="96" height="96" viewBox="0 0 24 24" className="mx-auto mb-4">
+            <motion.circle cx="12" cy="12" r="10" stroke="#34D399" strokeWidth="2" fill="none" initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.6 }} />
+            <motion.path d="M7 13l3 3 7-7" stroke="#34D399" strokeWidth="2" fill="none" initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ delay: 0.6, duration: 0.5 }} />
+          </motion.svg>
+          <h2 className="text-2xl font-semibold mb-2">Report submitted</h2>
+          <p className="text-muted mb-4">Thank you — the community will be notified.</p>
+          <button onClick={() => { setSuccess(false); setForm({ description: "", latitude: "", longitude: "", victim_age: "", victim_gender: "", weapon_used: "" }); setStep(1); }} className="px-6 py-2 bg-gradient-to-r from-primary to-accent text-white rounded-md">Report another</button>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
-    <>
-      <Navbar />
+    <div className="min-h-screen flex flex-col items-center py-12 bg-bg">
+      <div className="w-full max-w-xl p-6 bg-card rounded-2xl shadow-card-dark border border-bg/60">
+        <h1 className="text-2xl font-semibold mb-4">Report an Incident</h1>
+        <ProgressBar step={step} />
 
-      <motion.div
-        className="min-h-screen flex justify-center items-start pt-16 bg-gray-900"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-      >
-        <motion.div
-          className="bg-gray-800 p-8 rounded-2xl shadow-xl w-full max-w-xl border border-gray-700"
-          initial={{ y: 20 }}
-          animate={{ y: 0 }}
-        >
-          <h1 className="text-3xl font-semibold mb-6 text-blue-400">
-            Report an Incident
-          </h1>
-
-          {msg && (
-            <p className="mb-4 text-center text-lg text-green-400">{msg}</p>
+        <form onSubmit={step === 3 ? handleFinalSubmit : (e) => { e.preventDefault(); setStep((s) => Math.min(3, s+1)); }} className="mt-6">
+          {step === 1 && (
+            <Step>
+              <label className="block text-sm text-muted">Crime Description</label>
+              <textarea required value={form.description} onChange={(e) => update('description', e.target.value)} className="w-full p-3 bg-bg/30 rounded-md border border-bg/50" rows={5} />
+            </Step>
           )}
 
-          <form onSubmit={submitReport} className="space-y-4">
+          {step === 2 && (
+            <Step>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm text-muted">Latitude</label>
+                  <input required value={form.latitude} onChange={(e) => update('latitude', e.target.value)} className="w-full p-2 bg-bg/30 rounded-md border border-bg/50" />
+                </div>
+                <div>
+                  <label className="text-sm text-muted">Longitude</label>
+                  <input required value={form.longitude} onChange={(e) => update('longitude', e.target.value)} className="w-full p-2 bg-bg/30 rounded-md border border-bg/50" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 mt-2">
+                <div>
+                  <label className="text-sm text-muted">Victim Age</label>
+                  <input type="number" value={form.victim_age} onChange={(e) => update('victim_age', e.target.value)} className="w-full p-2 bg-bg/30 rounded-md border border-bg/50" />
+                </div>
+
+                <div>
+                  <label className="text-sm text-muted">Gender</label>
+                  <select value={form.victim_gender} onChange={(e) => update('victim_gender', e.target.value)} className="w-full p-2 bg-bg/30 rounded-md border border-bg/50">
+                    <option value="">Select</option>
+                    <option>Male</option>
+                    <option>Female</option>
+                    <option>Other</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-2">
+                <label className="text-sm text-muted">Weapon Used</label>
+                <input value={form.weapon_used} onChange={(e) => update('weapon_used', e.target.value)} placeholder="Knife, Gun, None..." className="w-full p-2 bg-bg/30 rounded-md border border-bg/50" />
+              </div>
+            </Step>
+          )}
+
+          {step === 3 && (
+            <Step>
+              <h3 className="text-lg font-semibold">Review</h3>
+              <div className="space-y-2 text-sm text-muted">
+                <div><strong>Description:</strong> {form.description}</div>
+                <div><strong>Location:</strong> {form.latitude}, {form.longitude}</div>
+                <div><strong>Victim:</strong> {form.victim_age || 'N/A'} / {form.victim_gender || 'N/A'}</div>
+                <div><strong>Weapon:</strong> {form.weapon_used || 'N/A'}</div>
+              </div>
+            </Step>
+          )}
+
+          <div className="flex items-center justify-between mt-6">
             <div>
-              <label className="text-gray-300">Crime Description</label>
-              <textarea
-                name="description"
-                value={form.description}
-                onChange={updateForm}
-                className="w-full p-3 bg-gray-900 text-gray-200 rounded-lg border border-gray-700 focus:ring-2 focus:ring-blue-500"
-                rows="4"
-                required
-              ></textarea>
-            </div>
-
-            {/* Coordinates */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-gray-300">Latitude</label>
-                <input
-                  type="number"
-                  step="any"
-                  name="latitude"
-                  value={form.latitude}
-                  onChange={updateForm}
-                  className="w-full p-3 bg-gray-900 text-gray-200 rounded-lg border border-gray-700 focus:ring-2 focus:ring-blue-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="text-gray-300">Longitude</label>
-                <input
-                  type="number"
-                  step="any"
-                  name="longitude"
-                  value={form.longitude}
-                  onChange={updateForm}
-                  className="w-full p-3 bg-gray-900 text-gray-200 rounded-lg border border-gray-700 focus:ring-2 focus:ring-blue-500"
-                  required
-                />
-              </div>
-            </div>
-
-            {/* Optional fields */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-gray-300">Victim Age</label>
-                <input
-                  type="number"
-                  name="victim_age"
-                  value={form.victim_age}
-                  onChange={updateForm}
-                  className="w-full p-3 bg-gray-900 text-gray-200 rounded-lg border border-gray-700 focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-gray-300">Gender</label>
-                <select
-                  name="victim_gender"
-                  value={form.victim_gender}
-                  onChange={updateForm}
-                  className="w-full p-3 bg-gray-900 text-gray-200 rounded-lg border border-gray-700 focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Select</option>
-                  <option value="Male">Male</option>
-                  <option value="Female">Female</option>
-                  <option value="Other">Other</option>
-                </select>
-              </div>
+              {step > 1 && <button type="button" onClick={() => setStep((s) => Math.max(1, s-1))} className="px-4 py-2 bg-bg/50 rounded-md text-muted">Back</button>}
             </div>
 
             <div>
-              <label className="text-gray-300">Weapon Used</label>
-              <input
-                name="weapon_used"
-                value={form.weapon_used}
-                onChange={updateForm}
-                className="w-full p-3 bg-gray-900 text-gray-200 rounded-lg border border-gray-700 focus:ring-2 focus:ring-blue-500"
-                placeholder="Knife, Gun, None, Unknown..."
-              />
+              {step < 3 && <button type="submit" className="px-6 py-2 bg-gradient-to-r from-primary to-accent text-white rounded-md">Next</button>}
+              {step === 3 && <button type="submit" disabled={submitting} className="px-6 py-2 bg-gradient-to-r from-primary to-accent text-white rounded-md">{submitting ? 'Submitting...' : 'Submit Report'}</button>}
             </div>
-
-            {/* Submit Button */}
-            <motion.button
-              whileTap={{ scale: 0.97 }}
-              type="submit"
-              disabled={loading}
-              className="w-full mt-4 py-3 bg-blue-600 hover:bg-blue-700 transition rounded-lg text-white font-semibold text-lg shadow-md"
-            >
-              {loading ? "Submitting..." : "Submit Report"}
-            </motion.button>
-          </form>
-        </motion.div>
-      </motion.div>
-    </>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
+            {/* Submit Button */}

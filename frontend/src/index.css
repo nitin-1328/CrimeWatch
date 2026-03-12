@@ -2,8 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+:root{
+  --bg: #0B1220;
+  --card: #0F1A26;
+  --muted: #9AA8B2;
+}
+
 body {
-  @apply bg-gray-900 text-gray-200;
+  @apply bg-bg text-gray-200;
 }
 
 /* custom input */
