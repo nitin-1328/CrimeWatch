@@ -11,11 +11,12 @@
   },
   "dependencies": {
     "@tailwindcss/forms": "^0.5.11",
+    "@turf/turf": "^7.3.4",
     "axios": "^1.13.2",
     "chart.js": "^4.5.1",
     "framer-motion": "^12.34.3",
     "leaflet": "^1.9.4",
-    "leaflet.heat": "^0.2.0",
+    "leaflet.markercluster": "^1.5.3",
     "react": "^19.2.0",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.2.0",

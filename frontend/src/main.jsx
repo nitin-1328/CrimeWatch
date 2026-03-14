@@ -1,13 +1,12 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
-
-// Leaflet
+import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import "leaflet.heat";
-
-// Tailwind CSS
 import "./index.css";
+import { setupLeafletHeat } from "./leafletHeat.js";
+
+setupLeafletHeat(L);
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

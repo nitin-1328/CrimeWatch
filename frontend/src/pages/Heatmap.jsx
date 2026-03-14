@@ -1,15 +1,15 @@
+// Heatmap.jsx
 import { useEffect, useState, useCallback, useRef } from "react";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
-import "leaflet.heat";
+import L from "leaflet";
 import API from "../api/axios";
 import HeatmapFilters from "../components/HeatmapFilters";
 import HeatmapLegend from "../components/HeatmapLegend";
 import FloatingStats from "../components/FloatingStats";
 import { motion } from "framer-motion";
 
-// ── Fix 1: Zoom-aware radius ───────────────────────
+// ── Zoom-aware radius ──────────────────────────────
 function getRadiusForZoom(zoom) {
-  // As zoom increases (closer), radius grows so dots stay same visual size
   if (zoom <= 5) return 20;
   if (zoom <= 6) return 25;
   if (zoom <= 7) return 35;
@@ -21,23 +21,30 @@ function getRadiusForZoom(zoom) {
   return 160;
 }
 
+// ── HeatLayer ──────────────────────────────────────
 function HeatLayer({ points }) {
   const map = useMap();
-  const heatLayerRef = useRef(null);
+  const layerRef = useRef(null);
 
-  // ── Build / rebuild layer when points change ──
   useEffect(() => {
     if (!points || points.length === 0) return;
-
-    // Remove old layer first
-    if (heatLayerRef.current) {
-      map.removeLayer(heatLayerRef.current);
-      heatLayerRef.current = null;
+    if (!L.heatLayer) {
+      console.error("heatLayer not available on L");
+      return;
     }
 
-    const heatPoints = points.map((p) => [p[0], p[1], p[2] || 0.5]);
+    if (layerRef.current) {
+      map.removeLayer(layerRef.current);
+      layerRef.current = null;
+    }
 
-    heatLayerRef.current = window.L.heatLayer(heatPoints, {
+    const heatPoints = points.map((p) => [
+      parseFloat(p[0]),
+      parseFloat(p[1]),
+      parseFloat(p[2]) || 0.5,
+    ]);
+
+    layerRef.current = L.heatLayer(heatPoints, {
       radius: getRadiusForZoom(map.getZoom()),
       blur: 25,
       maxZoom: 17,
@@ -52,25 +59,21 @@ function HeatLayer({ points }) {
       },
     });
 
-    heatLayerRef.current.addTo(map);
+    layerRef.current.addTo(map);
 
-    // ── Fix 2: Update radius on every zoom ───────
     const onZoom = () => {
-      if (heatLayerRef.current) {
-        heatLayerRef.current.setOptions({
-          radius: getRadiusForZoom(map.getZoom()),
-        });
-        heatLayerRef.current.redraw();
+      if (layerRef.current) {
+        layerRef.current.setOptions({ radius: getRadiusForZoom(map.getZoom()) });
+        layerRef.current.redraw();
       }
     };
-
     map.on("zoomend", onZoom);
 
     return () => {
       map.off("zoomend", onZoom);
-      if (heatLayerRef.current) {
-        map.removeLayer(heatLayerRef.current);
-        heatLayerRef.current = null;
+      if (layerRef.current) {
+        map.removeLayer(layerRef.current);
+        layerRef.current = null;
       }
     };
   }, [points, map]);
@@ -78,124 +81,112 @@ function HeatLayer({ points }) {
   return null;
 }
 
-// ── Fix 3: Filter data client-side reliably ───────
+// ── Client-side filter ─────────────────────────────
 function applyFilters(allPoints, filters) {
   let filtered = [...allPoints];
 
-  // Filter by severity (p[2] is 0–1 normalized, severity 1–5 → 0.2 steps)
   if (filters.severity > 1) {
-    const minWeight = (filters.severity - 1) / 4; // 1→0, 2→0.25, 3→0.5, 4→0.75, 5→1
+    const minWeight = filters.severity / 5;
     filtered = filtered.filter((p) => (p[2] || 0) >= minWeight);
   }
-
-  // Filter by crime types (p[3] holds category if present)
   if (filters.types && filters.types.length > 0) {
-    filtered = filtered.filter((p) =>
-      filters.types.some((t) =>
-        (p[3] || "").toLowerCase().includes(t.toLowerCase())
-      )
-    );
+    filtered = filtered.filter((p) => filters.types.includes(p[3] || ""));
   }
-
-  // Filter by time range (p[4] holds date string if present)
   if (filters.timeRange && filters.timeRange !== "all") {
+    const hours = { "24h": 24, "7d": 168, "30d": 720, "90d": 2160 };
     const now = new Date();
-    const daysMap = { "1d": 1, "7d": 7, "30d": 30, "90d": 90 };
-    const days = daysMap[filters.timeRange] || 7;
-    const cutoff = new Date(now - days * 24 * 60 * 60 * 1000);
-
+    const cutoff = new Date(now - (hours[filters.timeRange] || 168) * 60 * 60 * 1000);
     filtered = filtered.filter((p) => {
-      if (!p[4]) return true; // keep if no date info
+      if (!p[4]) return true;
       return new Date(p[4]) >= cutoff;
     });
   }
-
   return filtered;
 }
 
+// ── Main Heatmap Page ──────────────────────────────
 export default function Heatmap() {
-  const [allPoints, setAllPoints] = useState([]); // raw from API
-  const [heatPoints, setHeatPoints] = useState([]); // after filters
+  const [allPoints, setAllPoints] = useState([]);
+  const [heatPoints, setHeatPoints] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({
-    types: [], timeRange: "7d", severity: 1,
-  });
+  const [filters, setFilters] = useState({ types: [], timeRange: "7d", severity: 1 });
 
-  // Load once on mount — store raw data
   const loadHeatmap = useCallback(async () => {
     setLoading(true);
     try {
       const res = await API.get("/incidents/heatmap");
       const raw = res.data.heatmap || [];
       setAllPoints(raw);
-      setHeatPoints(raw); // show all by default
+      setHeatPoints(raw);
     } catch (err) {
       console.error("Heatmap load error:", err);
     }
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    loadHeatmap();
-  }, [loadHeatmap]);
+  useEffect(() => { loadHeatmap(); }, [loadHeatmap]);
 
-  // ── Fix 4: Apply filters instantly client-side ─
-  // No extra API call needed — just filter raw data
-  function handleApply(f) {
-    setFilters(f);
-    setHeatPoints(applyFilters(allPoints, f));
-  }
-
-  function handleReset() {
+  const handleApply = (f) => { setFilters(f); setHeatPoints(applyFilters(allPoints, f)); };
+  const handleReset = () => {
     const def = { types: [], timeRange: "7d", severity: 1 };
     setFilters(def);
-    setHeatPoints(allPoints); // restore all
-  }
+    setHeatPoints(allPoints);
+  };
 
-  // Stats based on filtered points
   const totalPoints = heatPoints.length;
   const avgSeverity = heatPoints.length
-    ? heatPoints.reduce((s, p) => s + (p[2] || 0), 0) / heatPoints.length
-    : 0;
-  const hotspots = heatPoints.filter((p) => (p[2] || 0) > 0.7).length;
+    ? heatPoints.reduce((s, p) => s + (p[2] || 0), 0) / heatPoints.length : 0;
+  const hotspots = heatPoints.filter((p) => (p[2] || 0) >= 0.8).length;
 
   return (
     <div className="min-h-screen bg-bg text-gray-200 p-6">
       <div className="max-w-7xl mx-auto">
         <div className="flex items-start gap-6">
-          <HeatmapFilters
-            onApply={handleApply}
-            onReset={handleReset}
-            initial={filters}
-          />
+
+          <HeatmapFilters onApply={handleApply} onReset={handleReset} initial={filters} />
 
           <div className="flex-1">
             <div className="mb-4">
               <h1 className="text-3xl font-bold">Crime Heatmap</h1>
-              <p className="text-muted mt-1">
+              <p className="text-[#9AA8B2] mt-1">
                 Visual representation of crime intensity across mapped regions.
                 Hotter areas indicate higher crime density.
               </p>
             </div>
 
+            {(filters.types.length > 0 || filters.severity > 1) && (
+              <div className="mb-3 flex gap-2 flex-wrap items-center">
+                <span className="text-xs text-[#9AA8B2]">Active:</span>
+                {filters.types.map((t) => (
+                  <span key={t} className="text-xs bg-blue-900/40 text-blue-300 px-2 py-0.5 rounded-full">{t}</span>
+                ))}
+                {filters.severity > 1 && (
+                  <span className="text-xs bg-red-900/40 text-red-300 px-2 py-0.5 rounded-full">
+                    Severity ≥ {filters.severity}
+                  </span>
+                )}
+                <span className="text-xs text-[#9AA8B2]">
+                  — {heatPoints.length.toLocaleString()} / {allPoints.length.toLocaleString()} points
+                </span>
+              </div>
+            )}
+
             <div className="relative">
               {loading && (
                 <div className="text-center py-12">
                   <motion.div
-                    className="inline-block w-full h-96 bg-gradient-to-r from-bg/60 via-bg/40 to-bg/60 rounded-lg"
-                    animate={{ opacity: [0.6, 1, 0.6] }}
+                    className="w-full h-96 bg-white/5 rounded-xl"
+                    animate={{ opacity: [0.4, 0.8, 0.4] }}
                     transition={{ duration: 1.4, repeat: Infinity }}
                   />
-                  <div className="mt-3 text-sm text-muted">
-                    Loading heatmap data...
-                  </div>
+                  <p className="mt-3 text-sm text-[#9AA8B2]">Loading heatmap data...</p>
                 </div>
               )}
 
               {!loading && (
-                <div className="rounded-xl overflow-hidden border border-bg/60 shadow-card-dark">
+                <div className="rounded-xl overflow-hidden border border-white/10 shadow-xl">
                   <MapContainer
-                    center={[20.5937, 78.9629]} // center of India
+                    center={[20.5937, 78.9629]}
                     zoom={5}
                     style={{ height: "72vh", width: "100%" }}
                   >
@@ -208,39 +199,15 @@ export default function Heatmap() {
                 </div>
               )}
 
-              <HeatmapLegend />
-              <div className="absolute bottom-6 left-6">
-                <FloatingStats
-                  total={totalPoints}
-                  hotspots={hotspots}
-                  avgSeverity={avgSeverity}
-                />
-              </div>
+              {!loading && (
+                <>
+                  <HeatmapLegend />
+                  <div className="absolute bottom-4 left-4 z-[1000]">
+                    <FloatingStats total={totalPoints} hotspots={hotspots} avgSeverity={avgSeverity} />
+                  </div>
+                </>
+              )}
             </div>
-
-            {/* Filter summary badge */}
-            {(filters.types.length > 0 || filters.severity > 1) && (
-              <div className="mt-3 flex gap-2 flex-wrap">
-                <span className="text-xs text-muted">Active filters:</span>
-                {filters.types.map((t) => (
-                  <span
-                    key={t}
-                    className="text-xs bg-blue-900/40 text-blue-300 px-2 py-0.5 rounded-full"
-                  >
-                    {t}
-                  </span>
-                ))}
-                {filters.severity > 1 && (
-                  <span className="text-xs bg-red-900/40 text-red-300 px-2 py-0.5 rounded-full">
-                    Severity ≥ {filters.severity}
-                  </span>
-                )}
-                <span className="text-xs text-muted">
-                  — showing {heatPoints.length.toLocaleString()} of{" "}
-                  {allPoints.length.toLocaleString()} points
-                </span>
-              </div>
-            )}
           </div>
         </div>
       </div>

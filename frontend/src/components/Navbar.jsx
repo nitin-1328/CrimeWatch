@@ -28,8 +28,7 @@ export default function Navbar() {
                 key={tab.to}
                 to={tab.to}
                 className={({ isActive }) =>
-                  `relative px-2 py-1 text-sm font-medium transition-colors ${
-                    isActive ? "text-white" : "text-[#9AA8B2]"
+                  `relative px-2 py-1 text-sm font-medium transition-colors ${isActive ? "text-white" : "text-[#9AA8B2]"
                   }`
                 }
               >
@@ -37,9 +36,8 @@ export default function Navbar() {
                   <span className="inline-flex flex-col items-center">
                     <span>{tab.label}</span>
                     <span
-                      className={`block h-0.5 w-full rounded mt-2 transform transition-transform duration-300 origin-left ${
-                        isActive ? "scale-x-100 bg-gradient-to-r from-[#3B82F6] to-[#7C3AED]" : "scale-x-0 bg-transparent"
-                      }`}
+                      className={`block h-0.5 w-full rounded mt-2 transform transition-transform duration-300 origin-left ${isActive ? "scale-x-100 bg-gradient-to-r from-[#3B82F6] to-[#7C3AED]" : "scale-x-0 bg-transparent"
+                        }`}
                     />
                   </span>
                 )}
