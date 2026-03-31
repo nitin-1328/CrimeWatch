@@ -10,14 +10,14 @@ from dotenv import load_dotenv
 load_dotenv()
 app = FastAPI(title="CrimeWatch API")
 
-origins = ["*"]  # change to your frontend domain in production
+origins = ["http://localhost:5173"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # ── Routers ────────────────────────────────────────
 from src.incidents  import router as incidents_router
 from src.auth       import router as auth_router

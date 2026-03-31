@@ -2,19 +2,36 @@ import { useState, useEffect } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import ProfileMenu from "./ProfileMenu";
 
+function parseJwt(token) {
+  try {
+    return JSON.parse(atob(token.split(".")[1]));
+  } catch {
+    return null;
+  }
+}
+
 const tabs = [
   { to: "/dashboard", label: "Dashboard" },
   { to: "/heatmap", label: "Heatmap" },
   { to: "/saferoute", label: "Safe Route" },
   { to: "/report", label: "Report" },
-  { to: "/analytics", label: "Analytics" }
+  { to: "/analytics", label: "Analytics" },
 ];
 
 export default function Navbar() {
   const location = useLocation();
   const [activePath, setActivePath] = useState(location.pathname);
+  const [userEmail, setUserEmail] = useState("");
 
   useEffect(() => setActivePath(location.pathname), [location.pathname]);
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (token) {
+      const decoded = parseJwt(token);
+      if (decoded?.sub) setUserEmail(decoded.sub);
+    }
+  }, []);
 
   return (
     <header className="bg-gradient-to-b from-[#071028]/60 via-transparent to-transparent backdrop-blur sticky top-0 z-40">
@@ -36,7 +53,9 @@ export default function Navbar() {
                   <span className="inline-flex flex-col items-center">
                     <span>{tab.label}</span>
                     <span
-                      className={`block h-0.5 w-full rounded mt-2 transform transition-transform duration-300 origin-left ${isActive ? "scale-x-100 bg-gradient-to-r from-[#3B82F6] to-[#7C3AED]" : "scale-x-0 bg-transparent"
+                      className={`block h-0.5 w-full rounded mt-2 transform transition-transform duration-300 origin-left ${isActive
+                          ? "scale-x-100 bg-gradient-to-r from-[#3B82F6] to-[#7C3AED]"
+                          : "scale-x-0 bg-transparent"
                         }`}
                     />
                   </span>
@@ -47,11 +66,14 @@ export default function Navbar() {
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="hidden sm:block text-sm text-[#9AA8B2]">Signed in</div>
+          {userEmail && (
+            <div className="hidden sm:block text-sm text-[#9AA8B2] truncate max-w-[160px]">
+              {userEmail}
+            </div>
+          )}
           <ProfileMenu />
         </div>
       </div>
     </header>
   );
 }
-

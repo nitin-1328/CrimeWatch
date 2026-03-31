@@ -7,6 +7,7 @@ import SafeRoute from "./pages/SafeRoute.jsx";
 import Report from "./pages/Report.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import Analytics from "./pages/Analytics.jsx";
+import AuthCallback from "./pages/AuthCallback.jsx";
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
 
         <Route
           path="/dashboard"
@@ -52,7 +54,6 @@ export default function App() {
           }
         />
 
-        {/* ✅ NEW ROUTE ADDED */}
         <Route
           path="/analytics"
           element={

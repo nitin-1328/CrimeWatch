@@ -14,6 +14,70 @@ const SEVERITY_WEIGHTS = {
 const TIME_FACTORS = { Day: 1.0, Evening: 1.2, Night: 1.5 };
 const TRAVELER_FACTORS = { Male: 1.0, Female: 1.3 };
 
+// ── Severity color system ──────────────────────────
+const SEV_CONFIG = {
+  5: { color: "#dc2626", border: "#991b1b", label: "Critical", size: 14 },
+  4: { color: "#ea580c", border: "#9a3412", label: "High", size: 12 },
+  3: { color: "#ca8a04", border: "#854d0e", label: "Medium", size: 10 },
+  2: { color: "#16a34a", border: "#14532d", label: "Low", size: 8 },
+  1: { color: "#2563eb", border: "#1e3a8a", label: "Minimal", size: 7 },
+};
+
+const getSevConfig = sev => SEV_CONFIG[Math.min(5, Math.max(1, Math.round(sev)))] || SEV_CONFIG[1];
+
+// ── Colored circle icon ────────────────────────────
+function makeCircleIcon(sev) {
+  const cfg = getSevConfig(sev);
+  const s = cfg.size;
+  return L.divIcon({
+    html: `<div style="
+      width:${s}px;height:${s}px;
+      border-radius:50%;
+      background:${cfg.color};
+      border:2px solid ${cfg.border};
+      box-shadow:0 1px 4px rgba(0,0,0,0.5);
+      cursor:pointer;
+    "></div>`,
+    className: "",
+    iconAnchor: [s / 2, s / 2],
+    iconSize: [s, s],
+  });
+}
+
+const scoreColor = s => s >= 60 ? "#22c55e" : s >= 35 ? "#f59e0b" : "#ef4444";
+
+const scoreLabel = s =>
+  s >= 75 ? "Relatively Safe" :
+    s >= 55 ? "Moderate Risk" :
+      s >= 35 ? "High Risk" :
+        s >= 15 ? "Very Dangerous" : "Extremely Dangerous";
+
+const segColor = n => n === 0 ? "#22c55e" : n <= 2 ? "#f59e0b" : "#ef4444";
+
+// ── FIXED: Log-scale scoring — no route ever scores 0 ──
+function calcScore(crimes, lenKm, tod, trav) {
+  if (!crimes.length) return { score: 100 };
+  const tf = TIME_FACTORS[tod] || 1.0;
+  const tr = TRAVELER_FACTORS[trav] || 1.0;
+
+  let rawRisk = 0;
+  crimes.forEach(c => {
+    rawRisk += (SEVERITY_WEIGHTS[c.category] || c.severity || 1) * tf * tr;
+  });
+
+  const riskPerKm = rawRisk / Math.max(lenKm, 0.1);
+
+  // Log scale: prevents extreme crime counts from collapsing score to 0
+  // log1p(0) = 0 → score 100 (no crimes)
+  // log1p(10) ≈ 2.4 → score ~57 (low density)
+  // log1p(50) ≈ 3.9 → score ~30 (medium density)
+  // log1p(200) ≈ 5.3 → score ~5 (very high density, min 5)
+  const logRisk = Math.log1p(riskPerKm);
+  const score = Math.max(5, Math.min(100, Math.round(100 - logRisk * 18)));
+
+  return { score };
+}
+
 async function searchAddress(q) {
   if (!q || q.length < 3) return [];
   const res = await fetch(
@@ -34,34 +98,6 @@ async function getRoute(start, end) {
   const data = await (await fetch(url)).json();
   if (!data.routes?.length) throw new Error("No route found");
   return data.routes;
-}
-
-function calcScore(crimes, lenKm, tod, trav) {
-  if (!crimes.length) return { score: 100 };
-  const tf = TIME_FACTORS[tod] || 1.0;
-  const tr = TRAVELER_FACTORS[trav] || 1.0;
-  let risk = 0;
-  crimes.forEach(c => { risk += (SEVERITY_WEIGHTS[c.category] || c.severity || 1) * tf * tr; });
-  risk /= Math.max(lenKm, 0.1);
-  return { score: Math.max(0, Math.round(100 - risk * 10)) };
-}
-
-const scoreColor = s => s >= 75 ? "#22c55e" : s >= 50 ? "#f59e0b" : "#ef4444";
-const scoreLabel = s => s >= 80 ? "Ultra Safe" : s >= 60 ? "Moderate Risk" : s >= 40 ? "High Risk" : "Dangerous";
-const segColor = n => n === 0 ? "#22c55e" : n <= 2 ? "#f59e0b" : "#ef4444";
-const pinColor = s => s >= 4 ? "#ef4444" : s >= 3 ? "#f97316" : s >= 2 ? "#eab308" : "#22c55e";
-const pinSize = s => s >= 4 ? 20 : s >= 3 ? 17 : 14;
-
-// ── Pin icon generator ─────────────────────────────
-function makePinIcon(sev) {
-  const color = pinColor(sev);
-  const size = pinSize(sev);
-  return L.divIcon({
-    html: `<div style="font-size:${size}px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.5));cursor:pointer" title="Severity ${sev}">📍</div>`,
-    className: "",
-    iconAnchor: [size / 2, size],
-    iconSize: [size, size],
-  });
 }
 
 // ── Address Autocomplete ───────────────────────────
@@ -113,16 +149,12 @@ function AddressInput({ label, value, onChange, onSelect }) {
   );
 }
 
-// ── Crime Layer with zoom-based rendering ──────────
-function CrimeLayer({ allCrimes, showAll }) {
-  const map = useRef(null);
+// ── Crime Layer with threshold filter ─────────────
+function CrimeLayer({ allCrimes, showAll, minSeverity }) {
   const leafletMap = useMap();
   const layerRef = useRef(null);
   const rafRef = useRef(null);
 
-  map.current = leafletMap;
-
-  // Build markers only for visible viewport + zoom gating
   const renderVisible = useCallback(() => {
     if (!showAll || !allCrimes.length) {
       if (layerRef.current) { leafletMap.removeLayer(layerRef.current); layerRef.current = null; }
@@ -131,8 +163,6 @@ function CrimeLayer({ allCrimes, showAll }) {
 
     const zoom = leafletMap.getZoom();
     const bounds = leafletMap.getBounds().pad(0.1);
-
-    // At low zoom show sampled points, at high zoom show all visible
     const maxVisible = zoom <= 5 ? 300 : zoom <= 7 ? 800 : zoom <= 9 ? 2000 : 5000;
 
     const visible = [];
@@ -142,10 +172,11 @@ function CrimeLayer({ allCrimes, showAll }) {
       const lon = parseFloat(c[1]);
       if (isNaN(lat) || isNaN(lon)) continue;
       if (!bounds.contains([lat, lon])) continue;
+      const sev = c[5] || Math.max(1, Math.round((parseFloat(c[2]) || 0.4) * 5));
+      if (sev < minSeverity) continue;
       visible.push(c);
     }
 
-    // Remove old layer
     if (layerRef.current) { leafletMap.removeLayer(layerRef.current); layerRef.current = null; }
 
     const group = L.layerGroup();
@@ -157,13 +188,14 @@ function CrimeLayer({ allCrimes, showAll }) {
       const city = c[6] || "";
       const tp = c[7] || "";
       const dt = c[4];
+      const cfg = getSevConfig(sev);
 
-      const m = L.marker([lat, lon], { icon: makePinIcon(sev) });
+      const m = L.marker([lat, lon], { icon: makeCircleIcon(sev) });
       m.bindPopup(`
         <div style="font-family:system-ui;min-width:180px;padding:4px">
-          <div style="font-weight:700;font-size:13px;margin-bottom:6px;color:#111">${cat}</div>
+          <div style="font-weight:700;font-size:13px;margin-bottom:4px;color:#111">${cat}</div>
+          <div style="display:inline-block;background:${cfg.color};color:white;border-radius:4px;padding:1px 8px;font-size:11px;margin-bottom:6px">${cfg.label} (${sev}/5)</div>
           <div style="font-size:12px;color:#555;line-height:1.9">
-            <div>⚠️ Severity: <b>${sev}/5</b></div>
             ${city ? `<div>🏙️ City: ${city}</div>` : ""}
             ${tp ? `<div>🕐 Time: ${tp}</div>` : ""}
             <div>📅 ${dt ? new Date(dt).toLocaleDateString("en-IN") : "Unknown"}</div>
@@ -175,16 +207,15 @@ function CrimeLayer({ allCrimes, showAll }) {
 
     group.addTo(leafletMap);
     layerRef.current = group;
-  }, [allCrimes, showAll, leafletMap]);
+  }, [allCrimes, showAll, minSeverity, leafletMap]);
 
-  // Debounced re-render on map move/zoom
   useEffect(() => {
     const debounced = () => {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = requestAnimationFrame(renderVisible);
     };
     leafletMap.on("moveend zoomend", debounced);
-    renderVisible(); // initial render
+    renderVisible();
     return () => {
       leafletMap.off("moveend zoomend", debounced);
       if (layerRef.current) leafletMap.removeLayer(layerRef.current);
@@ -195,8 +226,8 @@ function CrimeLayer({ allCrimes, showAll }) {
   return null;
 }
 
-// ── Route + Route Crime Layer ──────────────────────
-function RouteLayer({ routes, routeCrimes, showRoute, selectedRoute }) {
+// ── Route Layer ────────────────────────────────────
+function RouteLayer({ routes, routeCrimes, showRoute, selectedRoute, minSeverity }) {
   const map = useMap();
   const layersRef = useRef([]);
 
@@ -210,18 +241,20 @@ function RouteLayer({ routes, routeCrimes, showRoute, selectedRoute }) {
       const coords = route.geometry.coordinates.map(c => [c[1], c[0]]);
       const line = L.polyline(coords, {
         color: isSel ? (idx === 0 ? "#3b82f6" : "#a855f7") : "#6b7280",
-        weight: isSel ? 5 : 3,
-        opacity: isSel ? 0.5 : 0.3,
+        weight: isSel ? 7 : 3,
+        opacity: isSel ? 1.0 : 0.4,
         dashArray: idx === 1 ? "8,6" : null,
       });
-      line.addTo(map); layersRef.current.push(line);
+      line.addTo(map);
+      layersRef.current.push(line);
 
       if (isSel && route.crimeSegments?.length) {
         route.crimeSegments.forEach(seg => {
           const sc = seg.coords.map(c => [c[1], c[0]]);
           if (sc.length < 2) return;
-          const sl = L.polyline(sc, { color: seg.color, weight: 7, opacity: 0.85 });
-          sl.addTo(map); layersRef.current.push(sl);
+          const sl = L.polyline(sc, { color: seg.color, weight: 6, opacity: 0.75 });
+          sl.addTo(map);
+          layersRef.current.push(sl);
         });
       }
     });
@@ -242,28 +275,32 @@ function RouteLayer({ routes, routeCrimes, showRoute, selectedRoute }) {
     }
 
     if (showRoute && routeCrimes.length) {
-      routeCrimes.forEach(crime => {
-        const m = L.marker([crime.lat, crime.lon], {
-          icon: makePinIcon(crime.severity),
-          zIndexOffset: 1500,
-        });
-        m.bindPopup(`
-          <div style="font-family:system-ui;min-width:190px;padding:4px">
-            <div style="font-weight:700;font-size:14px;margin-bottom:6px;color:#111">${crime.category}</div>
-            <div style="background:#fef3c7;border-radius:6px;padding:3px 8px;margin-bottom:6px;font-size:11px;color:#92400e">⚡ Within 300m of your route</div>
-            <div style="font-size:12px;color:#555;line-height:1.9">
-              <div>⚠️ Severity: <b>${crime.severity}/5</b></div>
-              <div>📍 <b>${crime.distance}m</b> from route</div>
-              ${crime.city ? `<div>🏙️ ${crime.city}</div>` : ""}
-              ${crime.timePeriod ? `<div>🕐 ${crime.timePeriod}</div>` : ""}
-              <div>📅 ${crime.time}</div>
+      routeCrimes
+        .filter(crime => crime.severity >= minSeverity)
+        .forEach(crime => {
+          const m = L.marker([crime.lat, crime.lon], {
+            icon: makeCircleIcon(crime.severity),
+            zIndexOffset: 1500,
+          });
+          const cfg = getSevConfig(crime.severity);
+          m.bindPopup(`
+            <div style="font-family:system-ui;min-width:190px;padding:4px">
+              <div style="font-weight:700;font-size:14px;margin-bottom:4px;color:#111">${crime.category}</div>
+              <div style="display:inline-block;background:${cfg.color};color:white;border-radius:4px;padding:1px 8px;font-size:11px;margin-bottom:6px">${cfg.label} (${crime.severity}/5)</div>
+              <div style="background:#fef3c7;border-radius:6px;padding:3px 8px;margin-bottom:6px;font-size:11px;color:#92400e">⚡ Within 200m of your route</div>
+              <div style="font-size:12px;color:#555;line-height:1.9">
+                <div>📍 <b>${crime.distance}m</b> from route</div>
+                ${crime.city ? `<div>🏙️ ${crime.city}</div>` : ""}
+                ${crime.timePeriod ? `<div>🕐 ${crime.timePeriod}</div>` : ""}
+                <div>📅 ${crime.time}</div>
+              </div>
             </div>
-          </div>
-        `, { maxWidth: 230 });
-        m.addTo(map); layersRef.current.push(m);
-      });
+          `, { maxWidth: 230 });
+          m.addTo(map);
+          layersRef.current.push(m);
+        });
     }
-  }, [routes, routeCrimes, showRoute, selectedRoute, map]);
+  }, [routes, routeCrimes, showRoute, selectedRoute, minSeverity, map]);
 
   return null;
 }
@@ -285,6 +322,7 @@ export default function SafeRoute() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [allCrimes, setAllCrimes] = useState([]);
+  const [minSeverity, setMinSeverity] = useState(4);
 
   useEffect(() => {
     API.get("/incidents/heatmap").then(res => {
@@ -296,7 +334,9 @@ export default function SafeRoute() {
     return osmRoutes.map(route => {
       const turfLine = turf.lineString(route.geometry.coordinates);
       const lenKm = (route.distance || 0) / 1000;
-      const buffered = turf.buffer(turfLine, 0.3, { units: "kilometers" });
+
+      // ── CHANGED: buffer reduced from 0.3 to 0.2 (200m) ──
+      const buffered = turf.buffer(turfLine, 0.2, { units: "kilometers" });
 
       const nearbyCrimes = [];
       crimes.forEach(c => {
@@ -327,7 +367,8 @@ export default function SafeRoute() {
         const sc = coords.slice(i, Math.min(i + segSize + 1, coords.length));
         if (sc.length < 2) continue;
         try {
-          const sb = turf.buffer(turf.lineString(sc), 0.3, { units: "kilometers" });
+          // ── CHANGED: segment buffer also 0.2 ──
+          const sb = turf.buffer(turf.lineString(sc), 0.2, { units: "kilometers" });
           let cnt = 0;
           nearbyCrimes.forEach(c => { try { if (turf.booleanPointInPolygon(turf.point([c.lon, c.lat]), sb)) cnt++; } catch (_) { } });
           crimeSegments.push({ coords: sc, color: segColor(cnt) });
@@ -355,6 +396,8 @@ export default function SafeRoute() {
       setRouteCrimes(analyzed[0]?.nearbyCrimes || []);
       setSelectedRoute(0);
       setResult(analyzed[0]);
+      // ── NEW: auto-hide all dataset pins when route is found ──
+      setShowAll(false);
     } catch (err) { setError(err.message || "Failed to find route."); }
     setLoading(false);
   };
@@ -369,6 +412,9 @@ export default function SafeRoute() {
     setStartVal(destVal); setDestVal(startVal);
     setStartGeo(destGeo); setDestGeo(startGeo);
   };
+
+  const sevLabel = v => ["", "All", "Low+", "Medium+", "High+", "Critical"][v] || "";
+  const sevColor = v => [, "#2563eb", "#16a34a", "#ca8a04", "#ea580c", "#dc2626"][v] || "#ca8a04";
 
   return (
     <div className="min-h-screen bg-bg text-gray-200 p-6">
@@ -414,6 +460,30 @@ export default function SafeRoute() {
             </div>
           </div>
 
+          {/* ── Severity Threshold Slider ── */}
+          <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4">
+            <div className="flex items-center justify-between mb-3">
+              <label className="text-xs text-[#9AA8B2] uppercase tracking-wider">⚠️ Show Crimes — Min Severity</label>
+              <span className="text-sm font-bold px-3 py-0.5 rounded-full transition-all"
+                style={{ background: sevColor(minSeverity) + "33", color: sevColor(minSeverity) }}>
+                {minSeverity}/5 — {sevLabel(minSeverity)}
+              </span>
+            </div>
+            <input
+              type="range" min={1} max={5} step={1} value={minSeverity}
+              onChange={e => setMinSeverity(Number(e.target.value))}
+              className="w-full h-2 rounded-full appearance-none cursor-pointer"
+              style={{ accentColor: sevColor(minSeverity) }}
+            />
+            <div className="flex justify-between text-xs mt-2">
+              {[1, 2, 3, 4, 5].map(v => (
+                <span key={v} style={{ color: v === minSeverity ? sevColor(v) : "#6b7280", fontWeight: v === minSeverity ? 700 : 400 }}>
+                  ● {["", "All", "Low+", "Med+", "High+", "Critical"][v]}
+                </span>
+              ))}
+            </div>
+          </div>
+
           <button onClick={handleFind} disabled={loading || (!startVal && !startGeo) || (!destVal && !destGeo)}
             className="w-full py-3.5 rounded-xl font-semibold text-white bg-gradient-to-r from-blue-600 to-purple-600 hover:opacity-90 transition disabled:opacity-50 flex items-center justify-center gap-2">
             {loading ? <><span className="animate-spin inline-block">⟳</span> Analyzing...</> : <>🛡️ Find Safe Route</>}
@@ -443,36 +513,46 @@ export default function SafeRoute() {
 
         {/* Map */}
         <div className="rounded-2xl overflow-hidden border border-white/10 shadow-xl mb-6 relative">
-          <MapContainer center={[20.5937, 78.9629]} zoom={5} style={{ height: "60vh", width: "100%" }}
-            preferCanvas={true}>
+          <MapContainer center={[20.5937, 78.9629]} zoom={5} style={{ height: "60vh", width: "100%" }}>
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="© OpenStreetMap" />
-            <CrimeLayer allCrimes={allCrimes} showAll={showAll} />
-            <RouteLayer routes={routes} routeCrimes={routeCrimes} showRoute={showRoute} selectedRoute={selectedRoute} />
+            <CrimeLayer allCrimes={allCrimes} showAll={showAll} minSeverity={minSeverity} />
+            <RouteLayer routes={routes} routeCrimes={routeCrimes} showRoute={showRoute} selectedRoute={selectedRoute} minSeverity={minSeverity} />
           </MapContainer>
 
           {/* Toggles */}
           <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
             <button onClick={() => setShowAll(!showAll)}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition ${showAll ? "bg-blue-600/90 text-white" : "bg-gray-800/90 text-gray-400"}`}>
-              {showAll ? `📍 Dataset Pins ON` : "📍 Dataset Pins OFF"}
+              {showAll ? "📍 Dataset Pins ON" : "📍 Dataset Pins OFF"}
             </button>
             {routeCrimes.length > 0 && (
               <button onClick={() => setShowRoute(!showRoute)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium shadow-lg transition ${showRoute ? "bg-red-500/90 text-white" : "bg-gray-800/90 text-gray-400"}`}>
-                {showRoute ? `🔴 Route Crimes (${routeCrimes.length})` : "🟡 Show Route Crimes"}
+                {showRoute ? `🔴 Route Crimes (${routeCrimes.filter(c => c.severity >= minSeverity).length})` : "🟡 Show Route Crimes"}
               </button>
             )}
           </div>
 
           {/* Legend */}
-          <div className="absolute bottom-3 left-3 z-[1000] bg-gray-900/90 rounded-lg p-2.5 text-xs space-y-1.5">
-            <div className="text-gray-400 font-medium mb-1">📍 Pin = Crime Location</div>
-            <div className="flex items-center gap-2"><span style={{ color: "#ef4444", fontSize: 14 }}>📍</span> High Severity (4-5)</div>
-            <div className="flex items-center gap-2"><span style={{ color: "#f97316", fontSize: 13 }}>📍</span> Medium (3)</div>
-            <div className="flex items-center gap-2"><span style={{ color: "#eab308", fontSize: 12 }}>📍</span> Low (2)</div>
-            <div className="flex items-center gap-2"><span style={{ color: "#22c55e", fontSize: 11 }}>📍</span> Minimal (1)</div>
-            <div className="border-t border-white/10 pt-1.5 mt-1">
-              <div className="text-gray-400 text-xs mb-1">Route Color</div>
+          <div className="absolute bottom-3 left-3 z-[1000] bg-gray-900/90 rounded-lg p-3 text-xs space-y-1.5">
+            <div className="text-gray-400 font-medium mb-2">Crime Severity</div>
+            {[5, 4, 3, 2, 1].map(s => {
+              const cfg = SEV_CONFIG[s];
+              const hidden = s < minSeverity;
+              return (
+                <div key={s} className="flex items-center gap-2" style={{ opacity: hidden ? 0.3 : 1 }}>
+                  <span style={{
+                    display: "inline-block", width: cfg.size, height: cfg.size,
+                    borderRadius: "50%", background: cfg.color,
+                    border: `2px solid ${cfg.border}`, flexShrink: 0,
+                  }}></span>
+                  <span>{cfg.label} ({s}/5)</span>
+                  {hidden && <span className="text-gray-500">hidden</span>}
+                </div>
+              );
+            })}
+            <div className="border-t border-white/10 pt-2 mt-2">
+              <div className="text-gray-400 mb-1">Route Color</div>
               <div className="flex items-center gap-2"><span className="w-4 h-1.5 rounded bg-green-500 inline-block"></span> Safe</div>
               <div className="flex items-center gap-2"><span className="w-4 h-1.5 rounded bg-yellow-500 inline-block"></span> Moderate</div>
               <div className="flex items-center gap-2"><span className="w-4 h-1.5 rounded bg-red-500 inline-block"></span> Dangerous</div>
@@ -512,7 +592,7 @@ export default function SafeRoute() {
               <div className="bg-[#0F1A26] border border-white/10 rounded-2xl p-6">
                 <h3 className="font-semibold mb-4">📋 Route Analysis</h3>
                 <ul className="space-y-3 text-sm">
-                  <li className="flex gap-2"><span>⚠️</span><span><strong>{result.nearbyCrimes?.length || 0}</strong> crimes within 300m</span></li>
+                  <li className="flex gap-2"><span>⚠️</span><span><strong>{result.nearbyCrimes?.length || 0}</strong> crimes within 200m</span></li>
                   <li className="flex gap-2"><span>🔴</span><span><strong>{result.highSevCount || 0}</strong> high severity (4-5)</span></li>
                   <li className="flex gap-2"><span>🕐</span><span>Time: <strong>{timeOfDay}</strong>{timeOfDay === "Night" ? " (+50% risk)" : timeOfDay === "Evening" ? " (+20% risk)" : ""}</span></li>
                   <li className="flex gap-2"><span>👤</span><span>Traveler: <strong>{travType}</strong>{travType === "Female" ? " (+30% risk)" : ""}</span></li>
@@ -530,16 +610,25 @@ export default function SafeRoute() {
                 </h3>
                 {result.nearbyCrimes?.length ? (
                   <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                    {result.nearbyCrimes.slice(0, 8).map((c, i) => (
-                      <div key={i} className="flex items-center gap-3 bg-white/5 rounded-xl p-2.5">
-                        <span style={{ color: pinColor(c.severity), fontSize: 16 }}>📍</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-xs font-medium truncate">{c.category}</div>
-                          <div className="text-xs text-[#9AA8B2]">{c.distance}m • {c.city} • {c.timePeriod}</div>
+                    {result.nearbyCrimes.slice(0, 8).map((c, i) => {
+                      const cfg = getSevConfig(c.severity);
+                      return (
+                        <div key={i} className="flex items-center gap-3 bg-white/5 rounded-xl p-2.5">
+                          <span style={{
+                            display: "inline-block", width: 10, height: 10, borderRadius: "50%",
+                            background: cfg.color, border: `2px solid ${cfg.border}`, flexShrink: 0,
+                          }}></span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-medium truncate">{c.category}</div>
+                            <div className="text-xs text-[#9AA8B2]">{c.distance}m • {c.city} • {c.timePeriod}</div>
+                          </div>
+                          <div className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                            style={{ background: cfg.color + "33", color: cfg.color }}>
+                            {cfg.label}
+                          </div>
                         </div>
-                        <div className="text-xs text-[#9AA8B2]">Sev {c.severity}/5</div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="text-center text-[#9AA8B2] text-sm py-8">✅ No crimes nearby</div>
