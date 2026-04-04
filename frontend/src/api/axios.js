@@ -2,7 +2,7 @@
 import axios from "axios";
 
 const API = axios.create({
-  baseURL: "http://127.0.0.1:8000",
+  baseURL: import.meta.env.VITE_API_URL || "http://127.0.0.1:8000",
 });
 
 // ── Auth interceptor → attach token automatically ──
@@ -35,15 +35,12 @@ export const authAPI = {
 // INCIDENTS  (Report page)
 // ════════════════════════════════════════════════════
 export const incidentsAPI = {
-  // Submit a new crime report
   report: (data) =>
     API.post("/incidents/report", data),
 
-  // Get all incidents (with optional filters)
   getAll: (filters = {}) =>
     API.get("/incidents", { params: filters }),
 
-  // Get single incident by id
   getById: (id) =>
     API.get(`/incidents/${id}`),
 };
@@ -53,7 +50,6 @@ export const incidentsAPI = {
 // HEATMAP
 // ════════════════════════════════════════════════════
 export const heatmapAPI = {
-  // Get heatmap points — returns [{ lat, lon, weight }]
   getPoints: (filters = {}) =>
     API.get("/incidents/heatmap", { params: filters }),
 };
@@ -63,7 +59,6 @@ export const heatmapAPI = {
 // SAFE ROUTE
 // ════════════════════════════════════════════════════
 export const routeAPI = {
-  // Find safest route between two addresses
   findSafeRoute: (startAddress, endAddress) =>
     API.post("/route/safe", {
       start_address: startAddress,
@@ -76,43 +71,33 @@ export const routeAPI = {
 // ANALYTICS
 // ════════════════════════════════════════════════════
 export const analyticsAPI = {
-  // Monthly crime trend + forecast
   getMonthlyTrend: () =>
     API.get("/analytics/monthly-trend"),
 
-  // Crime breakdown by city
   getCityStats: () =>
     API.get("/analytics/city-stats"),
 
-  // Crime breakdown by category
   getCategoryStats: () =>
     API.get("/analytics/category-stats"),
 
-  // Crime by time of day
   getTimeStats: () =>
     API.get("/analytics/time-stats"),
 
-  // Crime by day of week
   getDayStats: () =>
     API.get("/analytics/day-stats"),
 
-  // Top hotspot areas
   getHotspots: () =>
     API.get("/analytics/hotspots"),
 };
 
 
 // ════════════════════════════════════════════════════
-// ML PREDICTIONS  (new endpoints)
+// ML PREDICTIONS
 // ════════════════════════════════════════════════════
 export const mlAPI = {
-  // Predict crime category from description text
-  // Returns: { category: "Robbery", probabilities: { Robbery: 0.82, ... } }
   predictCategory: (description) =>
     API.post("/predict/category", { description }),
 
-  // Predict risk score for a location
-  // Returns: { risk_score: 1842, risk_level: "High", risk_percent: 73.7 }
   predictRisk: ({
     lat,
     lon,
@@ -138,14 +123,13 @@ export const mlAPI = {
       area_avg_severity,
     }),
 
-  // Health check — are models loaded?
   getModelInfo: () =>
     API.get("/model-info"),
 };
 
 
 // ════════════════════════════════════════════════════
-// HELPER — unified error message extractor
+// HELPER
 // ════════════════════════════════════════════════════
 export const getErrorMessage = (error) => {
   return (
