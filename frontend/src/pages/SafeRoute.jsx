@@ -322,7 +322,7 @@ export default function SafeRoute() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [allCrimes, setAllCrimes] = useState([]);
-  const [minSeverity, setMinSeverity] = useState(4);
+  const [minSeverity, setMinSeverity] = useState(3);
 
   useEffect(() => {
     API.get("/incidents/heatmap").then(res => {
