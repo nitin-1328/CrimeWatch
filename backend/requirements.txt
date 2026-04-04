@@ -12,3 +12,6 @@ joblib
 shapely
 requests
 python-dotenv
+httpx
+matplotlib
+python-multipart
