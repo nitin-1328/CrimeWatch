@@ -83,6 +83,70 @@ except Exception as e:
     _heatmap_cache = []
 
 
+def _time_period_from_hour(hour: int) -> str:
+    if 6 <= hour < 12:
+        return "Morning"
+    if 12 <= hour < 17:
+        return "Afternoon"
+    if 17 <= hour < 21:
+        return "Evening"
+    return "Night"
+
+
+def _append_runtime_incident(doc: dict):
+    """
+    Keep in-memory dataframe/cache in sync with newly reported incidents.
+    This makes report updates visible without restarting the backend.
+    """
+    global _df, _heatmap_cache
+
+    lat = pd.to_numeric([doc.get("Latitude")], errors="coerce")[0]
+    lon = pd.to_numeric([doc.get("Longitude")], errors="coerce")[0]
+    if pd.isna(lat) or pd.isna(lon):
+        return
+
+    severity = pd.to_numeric([doc.get("Severity", 1)], errors="coerce")[0]
+    if pd.isna(severity):
+        severity = 1
+
+    reported_at = pd.to_datetime(
+        doc.get("Reported At") or doc.get("Date Reported"),
+        errors="coerce",
+    )
+    if pd.isna(reported_at):
+        reported_at = pd.Timestamp.utcnow()
+
+    hour = int(reported_at.hour)
+    city = doc.get("City")
+    crime_time_period = doc.get("Crime_Time_Period") or _time_period_from_hour(hour)
+    weapon = doc.get("Weapon Used") or "None"
+    category = doc.get("Clean Category") or "Other"
+
+    new_row = {
+        "Latitude": float(lat),
+        "Longitude": float(lon),
+        "Severity": float(severity),
+        "Clean Category": category,
+        "Date Reported": reported_at,
+        "City": city if city else np.nan,
+        "Crime_Time_Period": crime_time_period,
+        "Weapon Used": weapon,
+    }
+    _df = pd.concat([_df, pd.DataFrame([new_row])], ignore_index=True)
+
+    weight = round(min(max(float(severity) / 5.0, 0.1), 1.0), 2)
+    _heatmap_cache.append([
+        round(float(lat), 6),
+        round(float(lon), 6),
+        weight,
+        str(category),
+        reported_at.isoformat(),
+        int(float(severity)),
+        str(city or ""),
+        str(crime_time_period),
+    ])
+
+
 class ReportIn(BaseModel):
     description: str
     latitude: float
@@ -111,6 +175,23 @@ async def report_incident(payload: ReportIn):
         "Reported At":   datetime.datetime.utcnow()
     }
     res = await incidents_coll.insert_one(doc)
+
+    _append_runtime_incident(doc)
+
+    # Keep analytics module cache in sync if available.
+    try:
+        from src import analytics as analytics_module
+        analytics_module.add_runtime_incident(doc)
+    except Exception as e:
+        print(f"[incidents] analytics runtime sync skipped: {e}")
+
+    # Clear cached route scores so newly reported incidents affect repeated route queries.
+    try:
+        from src import safe_route as safe_route_module
+        safe_route_module._route_cache.clear()
+    except Exception:
+        pass
+
     return {"inserted_id": str(res.inserted_id), "predicted_category": category}
 
 
