@@ -3,7 +3,7 @@ import { useState } from 'react';
 
 export default function HeatmapFilters({ onApply, onReset, initial }) {
   const [types, setTypes] = useState(initial?.types || []);
-  const [timeRange, setTimeRange] = useState(initial?.timeRange || '7d');
+  const [timeRange, setTimeRange] = useState(initial?.timeRange || 'all');
   const [severity, setSeverity] = useState(initial?.severity || 1);
 
   const CRIME_TYPES = ['Assault', 'Theft', 'Burglary', 'Vandalism', 'Other'];
@@ -24,7 +24,7 @@ export default function HeatmapFilters({ onApply, onReset, initial }) {
 
   const handleReset = () => {
     setTypes([]);
-    setTimeRange('7d');
+    setTimeRange('all');
     setSeverity(1);
     onReset && onReset();
   };
@@ -70,6 +70,7 @@ export default function HeatmapFilters({ onApply, onReset, initial }) {
           value={timeRange}
           onChange={(e) => setTimeRange(e.target.value)}
         >
+          <option value="all">All time</option>
           <option value="24h">Last 24 hours</option>
           <option value="7d">Last 7 days</option>
           <option value="30d">Last 30 days</option>

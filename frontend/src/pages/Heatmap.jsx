@@ -109,7 +109,7 @@ export default function Heatmap() {
   const [allPoints, setAllPoints] = useState([]);
   const [heatPoints, setHeatPoints] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({ types: [], timeRange: "7d", severity: 1 });
+  const [filters, setFilters] = useState({ types: [], timeRange: "all", severity: 1 });
 
   const loadHeatmap = useCallback(async () => {
     setLoading(true);
@@ -128,7 +128,7 @@ export default function Heatmap() {
 
   const handleApply = (f) => { setFilters(f); setHeatPoints(applyFilters(allPoints, f)); };
   const handleReset = () => {
-    const def = { types: [], timeRange: "7d", severity: 1 };
+    const def = { types: [], timeRange: "all", severity: 1 };
     setFilters(def);
     setHeatPoints(allPoints);
   };

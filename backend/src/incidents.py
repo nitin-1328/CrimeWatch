@@ -34,21 +34,28 @@ try:
                      'Date Reported', 'City', 'Crime_Time_Period']
     _heatmap_df = _df[_heatmap_cols].copy()
 
-    # Smart sample: keep ALL high severity (4-5), sample medium/low
+    # Smart sample with hard cap: prioritize high severity, then medium, then low
     _high   = _heatmap_df[_heatmap_df['Severity'] >= 4]
     _medium = _heatmap_df[_heatmap_df['Severity'] == 3]
     _low    = _heatmap_df[_heatmap_df['Severity'] < 3]
 
     MAX_POINTS = 40000  # frontend handles this well
-    n_high   = len(_high)
-    n_medium = min(len(_medium), int(MAX_POINTS * 0.35))
-    n_low    = min(len(_low),    MAX_POINTS - n_high - n_medium)
+    n_high_all = len(_high)
+    if n_high_all >= MAX_POINTS:
+        n_high, n_medium, n_low = MAX_POINTS, 0, 0
+        _sampled = _high.sample(n=n_high, random_state=42).reset_index(drop=True)
+    else:
+        n_high = n_high_all
+        remaining = MAX_POINTS - n_high
+        n_medium = min(len(_medium), int(MAX_POINTS * 0.35), remaining)
+        remaining -= n_medium
+        n_low = min(len(_low), remaining)
 
-    _sampled = pd.concat([
-        _high,
-        _medium.sample(n=n_medium, random_state=42) if n_medium > 0 else pd.DataFrame(),
-        _low.sample(n=n_low,    random_state=42) if n_low > 0 else pd.DataFrame(),
-    ]).reset_index(drop=True)
+        _sampled = pd.concat([
+            _high,
+            _medium.sample(n=n_medium, random_state=42) if n_medium > 0 else pd.DataFrame(),
+            _low.sample(n=n_low, random_state=42) if n_low > 0 else pd.DataFrame(),
+        ]).reset_index(drop=True)
 
     # Pre-convert to list for fast serialization
     _heatmap_cache = []
