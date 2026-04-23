@@ -23,6 +23,30 @@ df["Weapon Used"] = df["Weapon Used"].fillna("None")
 
 _order = ["Morning", "Afternoon", "Evening", "Night"]
 _day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+_nearby_severity_levels = [1, 2, 3, 4, 5]
+_nearby_area_columns = ["Locality", "Area", "Sector", "District", "Sub-District", "Police Station"]
+_earth_radius_km = 6371.0088
+
+
+if "Latitude" in df.columns:
+    df["Latitude"] = pd.to_numeric(df["Latitude"], errors="coerce")
+else:
+    df["Latitude"] = np.nan
+
+if "Longitude" in df.columns:
+    df["Longitude"] = pd.to_numeric(df["Longitude"], errors="coerce")
+else:
+    df["Longitude"] = np.nan
+
+if "Lat_Round" in df.columns:
+    df["Lat_Round"] = pd.to_numeric(df["Lat_Round"], errors="coerce")
+else:
+    df["Lat_Round"] = np.nan
+
+if "Lon_Round" in df.columns:
+    df["Lon_Round"] = pd.to_numeric(df["Lon_Round"], errors="coerce")
+else:
+    df["Lon_Round"] = np.nan
 
 
 def _time_period_from_hour(h):
@@ -33,6 +57,38 @@ def _time_period_from_hour(h):
     if 17 <= h < 21:
         return "Evening"
     return "Night"
+
+
+def _haversine_km(origin_lat: float, origin_lon: float, latitudes: np.ndarray, longitudes: np.ndarray) -> np.ndarray:
+    """Vectorized Haversine distance (km) from one point to many points."""
+    lat1 = np.radians(origin_lat)
+    lon1 = np.radians(origin_lon)
+    lat2 = np.radians(latitudes)
+    lon2 = np.radians(longitudes)
+
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
+    return 2.0 * _earth_radius_km * np.arcsin(np.sqrt(a))
+
+
+def _build_nearby_area_labels(source: pd.DataFrame) -> pd.Series:
+    """Pick the most local available area label, falling back to coordinate sector buckets."""
+    for col in _nearby_area_columns:
+        if col in source.columns:
+            labels = source[col].fillna("").astype(str).str.strip()
+            if (labels != "").any():
+                return labels.where(labels != "", "Unknown area")
+
+    city = source["City"].fillna("Nearby area").astype(str).str.strip()
+    lat_round = pd.to_numeric(source.get("Lat_Round"), errors="coerce")
+    lon_round = pd.to_numeric(source.get("Lon_Round"), errors="coerce")
+    if lat_round.notna().any() and lon_round.notna().any():
+        lat_text = lat_round.map(lambda v: f"{v:.2f}" if pd.notna(v) else "?")
+        lon_text = lon_round.map(lambda v: f"{v:.2f}" if pd.notna(v) else "?")
+        return city + " sector " + lat_text + "," + lon_text
+
+    return city.where(city != "", "Nearby area")
 
 
 if "Crime_Time_Period" not in df.columns:
@@ -157,6 +213,9 @@ def add_runtime_incident(incident: dict):
     if pd.isna(severity):
         severity = 1
 
+    latitude = pd.to_numeric([incident.get("Latitude")], errors="coerce")[0]
+    longitude = pd.to_numeric([incident.get("Longitude")], errors="coerce")[0]
+
     hour = int(reported_at.hour)
     row = {
         "Date Reported": reported_at,
@@ -168,6 +227,10 @@ def add_runtime_incident(incident: dict):
         "Crime_Time_Period": incident.get("Crime_Time_Period") or _time_period_from_hour(hour),
         "City": incident.get("City") if incident.get("City") else np.nan,
         "Clean Category": incident.get("Clean Category") or "Other",
+        "Latitude": latitude,
+        "Longitude": longitude,
+        "Lat_Round": round(float(latitude), 2) if pd.notna(latitude) else np.nan,
+        "Lon_Round": round(float(longitude), 2) if pd.notna(longitude) else np.nan,
     }
     if "Case Closed" in df.columns:
         row["Case Closed"] = incident.get("Case Closed", "No")
@@ -308,6 +371,92 @@ def weapon_analysis(weapon: Optional[str] = Query(None), city: Optional[str] = Q
         "severity": {"labels": [f"Level {int(s)}" for s in sev["Severity"].tolist()], "values": sev["count"].tolist()},
         "day_of_week": {"labels": day_s["day_of_week"].tolist(), "values": day_s["count"].tolist()},
         "avg_severity": round(float(filtered["Severity"].mean()), 2),
+    }
+
+
+@router.get("/dashboard_nearby")
+def dashboard_nearby(
+    lat: float = Query(...),
+    lon: float = Query(...),
+    radius_km: float = Query(10.0, gt=0, le=100),
+):
+    """Dashboard-only nearby summary: stats, nearby alerts, and nearby area snapshot."""
+    geo = df.dropna(subset=["Latitude", "Longitude"]).copy()
+    if geo.empty:
+        return {
+            "meta": {"total_records": 0, "high_risk_zones": 0, "medium_risk_zones": 0, "low_risk_zones": 0},
+            "severity_stats": {"labels": [f"Level {s}" for s in _nearby_severity_levels], "values": [0] * len(_nearby_severity_levels)},
+            "top_nearby_areas": {"labels": [], "values": []},
+            "alerts": [],
+            "radius_km": radius_km,
+        }
+
+    distances = _haversine_km(
+        origin_lat=lat,
+        origin_lon=lon,
+        latitudes=geo["Latitude"].to_numpy(dtype=float),
+        longitudes=geo["Longitude"].to_numpy(dtype=float),
+    )
+    nearby_mask = distances <= radius_km
+    nearby = geo.loc[nearby_mask].copy()
+
+    if nearby.empty:
+        return {
+            "meta": {"total_records": 0, "high_risk_zones": 0, "medium_risk_zones": 0, "low_risk_zones": 0},
+            "severity_stats": {"labels": [f"Level {s}" for s in _nearby_severity_levels], "values": [0] * len(_nearby_severity_levels)},
+            "top_nearby_areas": {"labels": [], "values": []},
+            "alerts": [],
+            "radius_km": radius_km,
+        }
+
+    nearby["distance_km"] = distances[nearby_mask]
+    nearby["nearby_area"] = _build_nearby_area_labels(nearby)
+    nearby["Severity"] = pd.to_numeric(nearby["Severity"], errors="coerce").fillna(1)
+
+    severity_levels = nearby["Severity"].round().astype(int).clip(1, 5)
+    severity_counts = severity_levels.value_counts()
+    severity_values = [int(severity_counts.get(level, 0)) for level in _nearby_severity_levels]
+
+    area_counts = nearby["nearby_area"].value_counts().head(5)
+
+    top_alerts = nearby.sort_values(
+        by=["Severity", "Date Reported", "distance_km"],
+        ascending=[False, False, True],
+    ).head(3)
+    alerts = []
+    for _, row in top_alerts.iterrows():
+        severity = float(row.get("Severity", 1))
+        if severity >= 4:
+            level = "high"
+            text = "High activity reported"
+        elif severity >= 3:
+            level = "medium"
+            text = "Medium risk activity reported"
+        else:
+            level = "low"
+            text = "Low risk activity reported"
+
+        area_name = str(row.get("nearby_area") or row.get("City") or "nearby area")
+        distance_km = round(float(row.get("distance_km", 0.0)), 2)
+        alerts.append(
+            {
+                "level": level,
+                "distance_km": distance_km,
+                "text": f"{text} in {area_name} - {distance_km:.1f} km away",
+            }
+        )
+
+    return {
+        "meta": {
+            "total_records": int(len(nearby)),
+            "high_risk_zones": int((nearby["Severity"] >= 4).sum()),
+            "medium_risk_zones": int((nearby["Severity"] == 3).sum()),
+            "low_risk_zones": int((nearby["Severity"] < 3).sum()),
+        },
+        "severity_stats": {"labels": [f"Level {s}" for s in _nearby_severity_levels], "values": severity_values},
+        "top_nearby_areas": {"labels": area_counts.index.tolist(), "values": area_counts.tolist()},
+        "alerts": alerts,
+        "radius_km": radius_km,
     }
 
 
