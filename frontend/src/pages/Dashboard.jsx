@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "../api/axios";
 
@@ -84,6 +84,69 @@ async function geocodeSearch(query) {
   return { lat, lon, areaName };
 }
 
+function buildChatReply(question, context) {
+  const q = question.toLowerCase();
+  const {
+    loading,
+    locationState,
+    activeArea,
+    total,
+    high,
+    medium,
+    low,
+    alerts,
+    areas,
+  } = context;
+
+  if (loading) {
+    return "Nearby data is still loading. Please wait a moment and ask again.";
+  }
+
+  if (locationState !== "ready") {
+    return "Please allow location access or enter a location first, then I can answer with nearby crime data within 10 km.";
+  }
+
+  if (q.includes("summary") || q.includes("stats") || q.includes("total")) {
+    return `Within 10 km of ${activeArea}, I can see ${total.toLocaleString()} total records: ${high.toLocaleString()} high-risk, ${medium.toLocaleString()} medium-risk, and ${low.toLocaleString()} low-risk zones.`;
+  }
+
+  if (q.includes("high") || q.includes("danger") || q.includes("risky")) {
+    return `High-risk zones nearby: ${high.toLocaleString()} within 10 km of ${activeArea}.`;
+  }
+
+  if (q.includes("alert") || q.includes("incident") || q.includes("latest")) {
+    if (!alerts.length) {
+      return "No nearby alerts are currently listed within 10 km.";
+    }
+    return alerts.slice(0, 2).map((a) => a.text).join(" | ");
+  }
+
+  if (q.includes("area") || q.includes("nearby") || q.includes("locality") || q.includes("top")) {
+    if (!areas.length) {
+      return "I could not find enough area-wise data within 10 km for this location.";
+    }
+    const topAreas = areas
+      .slice(0, 3)
+      .map((a) => `${a.area} (${a.count.toLocaleString()})`)
+      .join(", ");
+    return `Top nearby areas within 10 km: ${topAreas}.`;
+  }
+
+  if (q.includes("heatmap")) {
+    return "Use the Crime Heatmap card to open the map view for deeper spatial analysis.";
+  }
+
+  if (q.includes("route") || q.includes("safe")) {
+    return "Use Safe Route Finder to compare safer paths between two places.";
+  }
+
+  if (q.includes("report")) {
+    return "Use Report Incident to submit a new incident for your area.";
+  }
+
+  return "Ask me things like: nearby summary, high-risk count, top nearby areas, or latest alerts.";
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
 
@@ -95,6 +158,15 @@ export default function Dashboard() {
   const [activeArea, setActiveArea] = useState("");
   const [locationError, setLocationError] = useState("");
   const [manualLocation, setManualLocation] = useState("");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatMessages, setChatMessages] = useState([
+    {
+      role: "bot",
+      text: "I am your CrimeWatch assistant. Ask me about nearby stats, alerts, or top areas.",
+    },
+  ]);
+  const chatBottomRef = useRef(null);
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000);
@@ -118,7 +190,7 @@ export default function Dashboard() {
       setActiveArea(resolvedArea);
       setDashboardData(nearbyRes.data);
       setLocationState("ready");
-    } catch (err) {
+    } catch {
       setDashboardData(null);
       setLocationState("error");
       setLocationError("Unable to load local crime data right now. Please try another location.");
@@ -167,7 +239,7 @@ export default function Dashboard() {
     try {
       const { lat, lon, areaName } = await geocodeSearch(query);
       await loadNearbyDashboard(lat, lon, areaName);
-    } catch (err) {
+    } catch {
       setLoading(false);
       setLocationState("denied");
       setLocationError("Could not find that location. Try locality, district, or city name.");
@@ -194,6 +266,41 @@ export default function Dashboard() {
   const alerts = dashboardData?.alerts || [];
   const maxArea = areas[0]?.count || 1;
   const showManualBox = ["denied", "unsupported", "error"].includes(locationState);
+
+  useEffect(() => {
+    if (chatOpen) {
+      chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatMessages, chatOpen]);
+
+  const sendChat = (text) => {
+    const query = text.trim();
+    if (!query) return;
+
+    const reply = buildChatReply(query, {
+      loading,
+      locationState,
+      activeArea,
+      total,
+      high,
+      medium,
+      low,
+      alerts,
+      areas,
+    });
+
+    setChatMessages((prev) => [
+      ...prev,
+      { role: "user", text: query },
+      { role: "bot", text: reply },
+    ]);
+    setChatInput("");
+  };
+
+  const handleChatSubmit = (e) => {
+    e.preventDefault();
+    sendChat(chatInput);
+  };
 
   return (
     <div className="min-h-screen bg-[#0B1220] text-gray-200 px-6 py-10">
@@ -356,6 +463,74 @@ export default function Dashboard() {
             </button>
           </div>
         </div>
+      </div>
+
+      <div className="fixed bottom-6 right-6 z-40">
+        {chatOpen ? (
+          <div className="w-[92vw] max-w-sm bg-[#0F1A26] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <h3 className="text-sm font-semibold text-white">CrimeWatch Chatbot</h3>
+              <button
+                onClick={() => setChatOpen(false)}
+                className="text-xs px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 text-[#9AA8B2]"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="px-3 py-3 h-72 overflow-y-auto space-y-3">
+              {chatMessages.map((m, i) => (
+                <div
+                  key={`${m.role}-${i}`}
+                  className={`max-w-[90%] text-sm px-3 py-2 rounded-xl ${
+                    m.role === "user"
+                      ? "ml-auto bg-blue-600/80 text-white"
+                      : "mr-auto bg-white/5 border border-white/10 text-gray-200"
+                  }`}
+                >
+                  {m.text}
+                </div>
+              ))}
+              <div ref={chatBottomRef} />
+            </div>
+
+            <div className="px-3 pb-3">
+              <div className="flex gap-2 flex-wrap mb-2">
+                {["Nearby summary", "Top nearby areas", "Latest alerts"].map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => sendChat(s)}
+                    className="text-xs px-2 py-1 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-[#9AA8B2]"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+              <form onSubmit={handleChatSubmit} className="flex gap-2">
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Ask about nearby crime..."
+                  className="flex-1 bg-[#111C29] border border-white/10 rounded-xl px-3 py-2 text-sm text-gray-100 placeholder:text-[#7D8A92] focus:outline-none focus:border-blue-500"
+                />
+                <button
+                  type="submit"
+                  className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-sm font-medium text-white"
+                >
+                  Send
+                </button>
+              </form>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setChatOpen(true)}
+            className="rounded-full px-5 py-3 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold shadow-xl"
+          >
+            Chatbot
+          </button>
+        )}
       </div>
     </div>
   );
